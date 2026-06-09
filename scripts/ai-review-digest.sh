@@ -255,6 +255,12 @@ if [ "$HIGH_CONF_COUNT" -gt 0 ]; then
   echo "Found ${HIGH_CONF_COUNT} high-confidence fixes agreed on by ${MIN_MODELS_FIX_PR}+ models"
 
   FIX_BRANCH="${FIX_BRANCH_PREFIX}${COMMIT_SHORT}"
+
+  # actions/checkout overrides HOME, so the runner has no git identity.
+  # Set one locally or `git commit` aborts with "empty ident name" (exit 128).
+  git config user.name "github-actions[bot]"
+  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
   git checkout -b "${FIX_BRANCH}"
 
   PR_BODY="## AI-Suggested Fixes for ${COMMIT_SHORT}
