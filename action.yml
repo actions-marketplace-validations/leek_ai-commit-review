@@ -67,7 +67,7 @@ inputs:
   claude-model:
     description: 'Anthropic model id.'
     required: false
-    default: 'claude-opus-4-7'
+    default: 'claude-opus-4-8'
   openai-model:
     description: 'OpenAI model id.'
     required: false

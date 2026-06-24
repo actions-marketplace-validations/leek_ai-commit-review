@@ -82,6 +82,8 @@ The action installs missing `claude` and `codex` commands when CLI mode is selec
 
 CLI modes run from the caller's checked-out repository and receive the `commit-sha` explicitly. Use `actions/checkout` with `fetch-depth: 0` so the CLIs can inspect the commit and surrounding repository context. The action keeps CLI inspection read-only: Claude is limited to read/search/git shell tools, and Codex runs with `codex-sandbox: read-only` by default.
 
+The default Claude model is `claude-opus-4-8`. If you set `install-cli-tools: false`, make sure the runner's Claude Code install supports Opus 4.8.
+
 ### Example: Claude Code + Codex CLI
 
 ```yaml
@@ -134,7 +136,7 @@ Do not expose CLI account credentials to public repositories, fork-triggered wor
 | `claude-cli-path` | `claude` | Claude Code CLI command path used in Claude CLI mode. |
 | `codex-cli-path` | `codex` | Codex CLI command path used in OpenAI CLI mode. |
 | `codex-sandbox` | `read-only` | Codex sandbox mode used in OpenAI CLI mode. |
-| `claude-model` | `claude-opus-4-7` | Anthropic model id. |
+| `claude-model` | `claude-opus-4-8` | Anthropic model id. |
 | `openai-model` | `gpt-5.5` | OpenAI model id. |
 | `gemini-model` | `gemini-3.5-flash` | Gemini model id. |
 | `claude-context-file` | _empty_ | Project context file injected into the Claude prompt. |

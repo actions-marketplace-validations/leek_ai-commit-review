@@ -19,7 +19,7 @@ import { argv, stdin, stdout, stderr, exit } from 'node:process';
 const PROVIDERS = {
   claude: {
     url: 'https://api.anthropic.com/v1/messages',
-    defaultModel: 'claude-opus-4-7',
+    defaultModel: 'claude-opus-4-8',
     envKey: 'ANTHROPIC_API_KEY',
     buildRequest(apiKey, prompt, model) {
       return {

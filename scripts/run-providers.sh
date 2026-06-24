@@ -35,7 +35,7 @@ install_cli_if_needed() {
 
   case "$provider" in
     claude)
-      npm install -g @anthropic-ai/claude-code >/tmp/claude-cli-install.log 2>&1 || {
+      npm install -g @anthropic-ai/claude-code@latest >/tmp/claude-cli-install.log 2>&1 || {
         echo "[claude] Failed to install Claude Code CLI"
         cat /tmp/claude-cli-install.log
         return 1
