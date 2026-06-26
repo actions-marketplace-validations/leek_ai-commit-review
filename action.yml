@@ -60,9 +60,9 @@ inputs:
     required: false
     default: 'codex'
   codex-sandbox:
-    description: 'Codex sandbox mode used in OpenAI CLI mode.'
+    description: 'Codex sandbox mode used in OpenAI CLI mode. GitHub-hosted runners may require danger-full-access because Codex read-only sandboxing depends on Linux user namespaces.'
     required: false
-    default: 'read-only'
+    default: 'danger-full-access'
 
   claude-model:
     description: 'Anthropic model id.'
@@ -118,7 +118,7 @@ inputs:
   min-severity-for-issue:
     description: 'Lowest severity that triggers issue creation. One of: critical, warning, info.'
     required: false
-    default: 'critical'
+    default: 'warning'
   min-models-for-fix-pr:
     description: 'Number of providers that must agree on a high-confidence fix before a draft fix PR is opened. Set to 0 to disable fix PRs.'
     required: false
@@ -180,6 +180,15 @@ outputs:
   fix-pr-url:
     description: 'URL of the created draft fix PR, if any.'
     value: ${{ steps.digest.outputs.fix_pr_url }}
+  provider-failures:
+    description: 'Comma-separated provider names that failed to produce a valid review.'
+    value: ${{ steps.review.outputs.provider_failures }}
+  provider-successes:
+    description: 'Comma-separated provider names that produced a valid review.'
+    value: ${{ steps.review.outputs.provider_successes }}
+  provider-skips:
+    description: 'Comma-separated provider names skipped because credentials or supported auth modes were not provided.'
+    value: ${{ steps.review.outputs.provider_skips }}
 
 runs:
   using: 'composite'
@@ -239,7 +248,7 @@ runs:
 
     - name: Create digest
       id: digest
-      if: steps.check.outputs.should_review == 'true' && steps.diff.outputs.skip_large != 'true'
+      if: steps.check.outputs.should_review == 'true' && steps.diff.outputs.skip_large != 'true' && steps.review.outcome == 'success'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -255,3 +264,52 @@ runs:
         OPENAI_MODEL: ${{ inputs.openai-model }}
         GEMINI_MODEL: ${{ inputs.gemini-model }}
       run: bash "${{ github.action_path }}/scripts/ai-review-digest.sh"
+
+    - name: Report review status
+      if: always() && steps.check.outputs.should_review == 'true' && steps.diff.outputs.skip_large != 'true'
+      shell: bash
+      env:
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        REVIEW_OUTCOME: ${{ steps.review.outcome }}
+        PROVIDER_SUCCESSES: ${{ steps.review.outputs.provider_successes }}
+        PROVIDER_FAILURES: ${{ steps.review.outputs.provider_failures }}
+        PROVIDER_SKIPS: ${{ steps.review.outputs.provider_skips }}
+        CRITICAL_COUNT: ${{ steps.digest.outputs.critical_count }}
+        WARNING_COUNT: ${{ steps.digest.outputs.warning_count }}
+        INFO_COUNT: ${{ steps.digest.outputs.info_count }}
+        ISSUE_URL: ${{ steps.digest.outputs.issue_url }}
+        FIX_PR_URL: ${{ steps.digest.outputs.fix_pr_url }}
+      run: |
+        {
+          echo "### AI commit review"
+          echo ""
+          echo "- Commit: \`${COMMIT_SHA}\`"
+          echo "- Provider run: ${REVIEW_OUTCOME:-skipped}"
+          echo "- Provider successes: ${PROVIDER_SUCCESSES:-none}"
+          echo "- Provider failures: ${PROVIDER_FAILURES:-none}"
+          echo "- Provider skips: ${PROVIDER_SKIPS:-none}"
+          echo "- Findings: ${CRITICAL_COUNT:-0} critical, ${WARNING_COUNT:-0} warning, ${INFO_COUNT:-0} info"
+          if [ -n "${ISSUE_URL}" ]; then
+            echo "- Issue: ${ISSUE_URL}"
+          else
+            echo "- Issue: none"
+          fi
+          if [ -n "${FIX_PR_URL}" ]; then
+            echo "- Fix PR: ${FIX_PR_URL}"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Verify providers left checkout unchanged
+      if: steps.check.outputs.should_review == 'true' && steps.diff.outputs.skip_large != 'true' && steps.review.outcome == 'success'
+      shell: bash
+      run: |
+        git diff --exit-code
+        git diff --cached --exit-code
+
+        UNTRACKED=$(git ls-files --others --exclude-standard | grep -Ev '^(claude-findings|openai-findings|gemini-findings)/' || true)
+
+        if [ -n "$UNTRACKED" ]; then
+          echo "Unexpected untracked files left after AI review:"
+          echo "$UNTRACKED"
+          exit 1
+        fi

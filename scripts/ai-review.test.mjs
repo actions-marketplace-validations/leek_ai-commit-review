@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildReviewPrompt, findingsJsonSchema, isSelfRetracted, parseFindings } from './ai-review.mjs';
+import { buildReviewPrompt, findingsJsonSchema, isReviewFailure, isSelfRetracted, parseFindings } from './ai-review.mjs';
 
 // Why these matter: the model files a finding then undermines it in the same
 // description. Shipping it wastes a reviewer's time triaging a non-issue, which
@@ -112,6 +112,18 @@ test('parses final agent message from Codex JSONL output', () => {
     summary: 'Codex result',
     findings: [],
   });
+});
+
+test('flags CLI inspection failures as review failures', () => {
+  assert.equal(isReviewFailure({
+    summary: 'Unable to inspect the commit because read-only repository commands failed in the current sandbox, so no validated findings are reported.',
+    findings: [],
+  }), true);
+
+  assert.equal(isReviewFailure({
+    summary: 'Clean commit with no validated findings.',
+    findings: [],
+  }), false);
 });
 
 test('schema requires the normalized review shape', () => {

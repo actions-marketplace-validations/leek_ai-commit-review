@@ -7,6 +7,53 @@ REVIEW_WORKSPACE="${GITHUB_WORKSPACE:-$PWD}"
 
 mkdir -p claude-findings openai-findings gemini-findings
 
+FAILED_PROVIDERS=()
+SUCCEEDED_PROVIDERS=()
+SKIPPED_PROVIDERS=()
+
+emit_output() {
+  local key="$1"
+  local val="$2"
+
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    echo "${key}=${val}" >> "$GITHUB_OUTPUT"
+  fi
+}
+
+join_by_comma() {
+  local first=true
+  local value
+
+  for value in "$@"; do
+    if [ "$first" = true ]; then
+      printf '%s' "$value"
+      first=false
+    else
+      printf ',%s' "$value"
+    fi
+  done
+}
+
+mark_provider_failed() {
+  local provider="$1"
+  local message="$2"
+
+  FAILED_PROVIDERS+=("$provider")
+  echo "::error title=${provider} review failed::${message}"
+}
+
+mark_provider_succeeded() {
+  local provider="$1"
+
+  SUCCEEDED_PROVIDERS+=("$provider")
+}
+
+mark_provider_skipped() {
+  local provider="$1"
+
+  SKIPPED_PROVIDERS+=("$provider")
+}
+
 lower() {
   tr '[:upper:]' '[:lower:]' <<< "${1:-}"
 }
@@ -116,17 +163,24 @@ normalize_provider_output() {
   local log_file="$3"
 
   if [ ! -s "$raw_file" ]; then
-    return
+    echo "[$provider] No CLI output was captured." >> "$log_file"
+    return 1
   fi
 
-  node "$SCRIPT_DIR/ai-review.mjs" --provider "$provider" --normalize \
+  if ! node "$SCRIPT_DIR/ai-review.mjs" --provider "$provider" --normalize \
     < "$raw_file" \
     > "/tmp/${provider}-findings.json" \
-    2>> "$log_file" || true
-
-  if [ -s "/tmp/${provider}-findings.json" ]; then
-    cp "/tmp/${provider}-findings.json" "${provider}-findings/findings.json"
+    2>> "$log_file"; then
+    echo "[$provider] CLI output could not be normalized into a valid review." >> "$log_file"
+    return 1
   fi
+
+  if [ ! -s "/tmp/${provider}-findings.json" ]; then
+    echo "[$provider] Normalized findings file was empty." >> "$log_file"
+    return 1
+  fi
+
+  cp "/tmp/${provider}-findings.json" "${provider}-findings/findings.json"
 }
 
 ensure_codex_config() {
@@ -156,27 +210,44 @@ run_api_provider() {
   local key="${!key_var:-}"
   if [ -z "$key" ]; then
     echo "[$provider] No API key provided. Skipping."
-    return
+    return 2
   fi
 
   echo "[$provider] Running review (model: ${!model_var:-default})"
 
-  AI_REVIEW_MODEL="${!model_var:-}" \
+  if ! AI_REVIEW_MODEL="${!model_var:-}" \
   AI_REVIEW_CONTEXT_FILE="${!context_var:-}" \
   AI_REVIEW_PROMPT_FILE="${PROMPT_FILE:-}" \
     node "$SCRIPT_DIR/ai-review.mjs" --provider "$provider" \
     < /tmp/filtered-diff.txt \
     > "/tmp/${provider}-findings.json" \
-    2> "/tmp/${provider}-review.log" || true
+    2> "/tmp/${provider}-review.log"; then
+    if [ -s "/tmp/${provider}-review.log" ]; then
+      echo "[$provider] log:"
+      cat "/tmp/${provider}-review.log"
+    fi
+
+    return 1
+  fi
 
   if [ -s "/tmp/${provider}-findings.json" ]; then
     cp "/tmp/${provider}-findings.json" "${provider}-findings/findings.json"
+  else
+    echo "[$provider] Review completed without a findings file." >> "/tmp/${provider}-review.log"
+    if [ -s "/tmp/${provider}-review.log" ]; then
+      echo "[$provider] log:"
+      cat "/tmp/${provider}-review.log"
+    fi
+
+    return 1
   fi
 
   if [ -s "/tmp/${provider}-review.log" ]; then
     echo "[$provider] log:"
     cat "/tmp/${provider}-review.log"
   fi
+
+  return 0
 }
 
 run_claude_cli_provider() {
@@ -216,20 +287,27 @@ run_claude_cli_provider() {
     claude_env+=(CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN")
   fi
 
+  local status=0
   (
     cd "$REVIEW_WORKSPACE" || exit 1
     env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN "${claude_env[@]}" "$command_path" "${args[@]}" \
       < "$prompt_file" \
       > "$raw_file" \
-      2>> "$log_file" || true
-  )
+      2>> "$log_file"
+  ) || status=$?
 
-  normalize_provider_output claude "$raw_file" "$log_file"
+  if [ "$status" -ne 0 ]; then
+    echo "[claude] CLI exited with status ${status}." >> "$log_file"
+  fi
+
+  normalize_provider_output claude "$raw_file" "$log_file" || status=1
 
   if [ -s "$log_file" ]; then
     echo "[claude] log:"
     cat "$log_file"
   fi
+
+  return "$status"
 }
 
 run_openai_cli_provider() {
@@ -285,17 +363,24 @@ run_openai_cli_provider() {
     codex_env+=(CODEX_ACCESS_TOKEN="$CODEX_ACCESS_TOKEN")
   fi
 
+  local status=0
   env -u OPENAI_API_KEY -u CODEX_API_KEY "${codex_env[@]}" "$command_path" "${args[@]}" \
     < "$prompt_file" \
     >> "$log_file" \
-    2>&1 || true
+    2>&1 || status=$?
 
-  normalize_provider_output openai "$raw_file" "$log_file"
+  if [ "$status" -ne 0 ]; then
+    echo "[openai] Codex CLI exited with status ${status}." >> "$log_file"
+  fi
+
+  normalize_provider_output openai "$raw_file" "$log_file" || status=1
 
   if [ -s "$log_file" ]; then
     echo "[openai] log:"
     cat "$log_file"
   fi
+
+  return "$status"
 }
 
 run_provider() {
@@ -306,21 +391,53 @@ run_provider() {
   local mode_var="$5"
 
   local mode
+  local status
   mode="$(provider_mode "$provider" "${!mode_var:-auto}" "$key_var")"
 
   case "$mode" in
-    api) run_api_provider "$provider" "$key_var" "$model_var" "$context_var" ;;
+    api)
+      run_api_provider "$provider" "$key_var" "$model_var" "$context_var"
+      status=$?
+
+      case "$status" in
+        0) mark_provider_succeeded "$provider" ;;
+        2) mark_provider_skipped "$provider" ;;
+        *) mark_provider_failed "$provider" "API provider did not produce a valid review." ;;
+      esac
+      ;;
     cli)
       case "$provider" in
-        claude) run_claude_cli_provider ;;
-        openai) run_openai_cli_provider ;;
+        claude)
+          if run_claude_cli_provider; then
+            mark_provider_succeeded "$provider"
+          else
+            mark_provider_failed "$provider" "Claude CLI did not produce a valid review."
+          fi
+          ;;
+        openai)
+          if run_openai_cli_provider; then
+            mark_provider_succeeded "$provider"
+          else
+            mark_provider_failed "$provider" "Codex CLI did not produce a valid review."
+          fi
+          ;;
         *)
           echo "[$provider] CLI mode is not supported. Falling back to API mode."
           run_api_provider "$provider" "$key_var" "$model_var" "$context_var"
+          status=$?
+
+          case "$status" in
+            0) mark_provider_succeeded "$provider" ;;
+            2) mark_provider_skipped "$provider" ;;
+            *) mark_provider_failed "$provider" "Fallback API provider did not produce a valid review." ;;
+          esac
           ;;
       esac
       ;;
-    skip) echo "[$provider] No credentials provided. Skipping." ;;
+    skip)
+      echo "[$provider] No credentials provided. Skipping."
+      mark_provider_skipped "$provider"
+      ;;
   esac
 }
 
@@ -332,4 +449,19 @@ run_provider claude ANTHROPIC_API_KEY CLAUDE_MODEL CLAUDE_CONTEXT_FILE CLAUDE_AU
 run_provider openai OPENAI_API_KEY OPENAI_MODEL OPENAI_CONTEXT_FILE OPENAI_AUTH
 run_provider gemini GEMINI_API_KEY GEMINI_MODEL GEMINI_CONTEXT_FILE GEMINI_AUTH
 
-echo "reviewed=true" >> "$GITHUB_OUTPUT"
+emit_output provider_failures "$(join_by_comma "${FAILED_PROVIDERS[@]}")"
+emit_output provider_successes "$(join_by_comma "${SUCCEEDED_PROVIDERS[@]}")"
+emit_output provider_skips "$(join_by_comma "${SKIPPED_PROVIDERS[@]}")"
+
+if [ "${#FAILED_PROVIDERS[@]}" -gt 0 ]; then
+  emit_output reviewed false
+  exit 1
+fi
+
+if [ "${#SUCCEEDED_PROVIDERS[@]}" -eq 0 ]; then
+  echo "::error title=No AI review providers ran::Configure at least one provider credential or supported CLI auth mode."
+  emit_output reviewed false
+  exit 1
+fi
+
+emit_output reviewed true

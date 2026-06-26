@@ -359,6 +359,28 @@ export function parseFindings(text) {
   }
 }
 
+export function isReviewFailure(findings) {
+  if (findings?.summary === 'Parse error') {
+    return true;
+  }
+
+  if (!Array.isArray(findings?.findings) || findings.findings.length > 0) {
+    return false;
+  }
+
+  const summary = findings.summary ?? '';
+
+  return [
+    /\bunable to inspect\b/i,
+    /\bcannot inspect\b/i,
+    /\bcould not inspect\b/i,
+    /\bcan'?t inspect\b/i,
+    /\bread-only repository commands failed\b/i,
+    /\bfailed in (?:the )?sandbox\b/i,
+    /\bsandbox.*failed\b/i,
+  ].some((pattern) => pattern.test(summary));
+}
+
 /**
  * Phrases a model uses when it talks itself out of a finding it just filed.
  * The prompt already tells models to drop these (rule 6), but they routinely
@@ -430,6 +452,10 @@ async function main() {
     findings.provider = provider;
 
     stdout.write(JSON.stringify(findings, null, 2));
+    if (isReviewFailure(findings)) {
+      stderr.write(`[${provider}] Review output indicates the provider failed to inspect the commit.\n`);
+      exit(1);
+    }
     exit(0);
   }
 
@@ -441,6 +467,10 @@ async function main() {
   findings.provider = provider;
 
   stdout.write(JSON.stringify(findings, null, 2));
+  if (isReviewFailure(findings)) {
+    stderr.write(`[${provider}] Review output indicates the provider failed to inspect the commit.\n`);
+    exit(1);
+  }
 }
 
 if (import.meta.url === pathToFileURL(argv[1] ?? '').href) {

@@ -80,7 +80,7 @@ The default auth mode for Claude and OpenAI is `auto`, which preserves existing 
 
 The action installs missing `claude` and `codex` commands when CLI mode is selected. Set `install-cli-tools: false` if your runner already has them.
 
-CLI modes run from the caller's checked-out repository and receive the `commit-sha` explicitly. Use `actions/checkout` with `fetch-depth: 0` so the CLIs can inspect the commit and surrounding repository context. Unlike API mode, CLI mode does not embed the filtered diff in the prompt; Claude and Codex inspect the commit from the checkout themselves. The action keeps CLI inspection read-only: Claude is limited to read/search/git shell tools, and Codex runs with `codex-sandbox: read-only` by default.
+CLI modes run from the caller's checked-out repository and receive the `commit-sha` explicitly. Use `actions/checkout` with `fetch-depth: 0` so the CLIs can inspect the commit and surrounding repository context. Unlike API mode, CLI mode does not embed the filtered diff in the prompt; Claude and Codex inspect the commit from the checkout themselves. Claude is limited to read/search/git shell tools. Codex defaults to `codex-sandbox: danger-full-access` because its Linux read-only sandbox depends on user namespaces that may be unavailable on GitHub-hosted runners. The action verifies afterward that the checkout has no tracked changes and no unexpected untracked files.
 
 Codex CLI mode writes `project_doc_fallback_filenames = ["CLAUDE.md"]` to `CODEX_HOME/config.toml`, so repositories that use `CLAUDE.md` instead of `AGENTS.md` are still picked up by Codex's project-doc discovery.
 
@@ -135,7 +135,7 @@ Do not expose CLI account credentials to public repositories, fork-triggered wor
 | `install-cli-tools` | `true` | Install missing Claude Code or Codex CLI tools when a CLI mode is selected. |
 | `claude-cli-path` | `claude` | Claude Code CLI command path used in Claude CLI mode. |
 | `codex-cli-path` | `codex` | Codex CLI command path used in OpenAI CLI mode. |
-| `codex-sandbox` | `read-only` | Codex sandbox mode used in OpenAI CLI mode. |
+| `codex-sandbox` | `danger-full-access` | Codex sandbox mode used in OpenAI CLI mode. Use `read-only` only on runners where Codex's Linux sandbox can create user namespaces. |
 | `claude-model` | `claude-opus-4-8` | Anthropic model id. |
 | `openai-model` | `gpt-5.5` | OpenAI model id. |
 | `gemini-model` | `gemini-3.5-flash` | Gemini model id. |
@@ -147,7 +147,7 @@ Do not expose CLI account credentials to public repositories, fork-triggered wor
 | `max-diff-lines` | `5000` | Skip review if filtered diff exceeds this many added/changed lines. |
 | `skip-message-patterns` | `Merge*` | Newline-separated bash globs matched against the commit subject. |
 | `skip-author-patterns` | _empty_ | Newline-separated bash globs matched against the commit author name. |
-| `min-severity-for-issue` | `critical` | One of `critical`, `warning`, `info`. |
+| `min-severity-for-issue` | `warning` | One of `critical`, `warning`, `info`. |
 | `min-models-for-fix-pr` | `2` | Number of providers that must agree on a high-confidence fix before a fix PR is opened. `0` disables. |
 | `issue-label` | `ai-review` | Label applied to created issues. |
 | `issue-title-prefix` | `[AI Review]` | Issue title prefix. |
@@ -169,6 +169,9 @@ Do not expose CLI account credentials to public repositories, fork-triggered wor
 | `info-count` | Info findings after dedup. |
 | `issue-url` | URL of the created issue, if any. |
 | `fix-pr-url` | URL of the created draft fix PR, if any. |
+| `provider-failures` | Comma-separated provider names that failed to produce a valid review. |
+| `provider-successes` | Comma-separated provider names that produced a valid review. |
+| `provider-skips` | Comma-separated provider names skipped because credentials or supported auth modes were not provided. |
 
 ## Example: project-tuned
 
@@ -227,6 +230,7 @@ permissions:
 - Existing issues for the same short SHA are detected and creation is skipped.
 - All API calls have two retries on 5xx responses.
 - CLI modes normalize their output through the same findings parser and self-retraction filter as API modes.
+- Selected providers that fail to produce valid review JSON fail the action instead of being counted as clean reviews.
 
 ## License
 
