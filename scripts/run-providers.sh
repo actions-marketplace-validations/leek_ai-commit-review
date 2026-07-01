@@ -453,15 +453,19 @@ emit_output provider_failures "$(join_by_comma "${FAILED_PROVIDERS[@]}")"
 emit_output provider_successes "$(join_by_comma "${SUCCEEDED_PROVIDERS[@]}")"
 emit_output provider_skips "$(join_by_comma "${SKIPPED_PROVIDERS[@]}")"
 
-if [ "${#FAILED_PROVIDERS[@]}" -gt 0 ]; then
+if [ "${#SUCCEEDED_PROVIDERS[@]}" -eq 0 ]; then
+  if [ "${#FAILED_PROVIDERS[@]}" -gt 0 ]; then
+    echo "::error title=No AI review providers completed::At least one provider was selected, but none produced a valid review."
+  else
+    echo "::error title=No AI review providers ran::Configure at least one provider credential or supported CLI auth mode."
+  fi
+
   emit_output reviewed false
   exit 1
 fi
 
-if [ "${#SUCCEEDED_PROVIDERS[@]}" -eq 0 ]; then
-  echo "::error title=No AI review providers ran::Configure at least one provider credential or supported CLI auth mode."
-  emit_output reviewed false
-  exit 1
+if [ "${#FAILED_PROVIDERS[@]}" -gt 0 ]; then
+  echo "::warning title=Some AI review providers failed::Continuing because at least one provider produced a valid review: $(join_by_comma "${SUCCEEDED_PROVIDERS[@]}"). Failed providers: $(join_by_comma "${FAILED_PROVIDERS[@]}")."
 fi
 
 emit_output reviewed true

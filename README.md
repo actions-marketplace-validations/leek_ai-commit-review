@@ -230,7 +230,7 @@ permissions:
 - Existing issues for the same short SHA are detected and creation is skipped.
 - All API calls have two retries on 5xx responses.
 - CLI modes normalize their output through the same findings parser and self-retraction filter as API modes.
-- Selected providers that fail to produce valid review JSON fail the action instead of being counted as clean reviews.
+- Selected providers that fail to produce valid review JSON are reported in `provider-failures` and logged as warnings when at least one other provider succeeds. The action fails only when no selected provider produces a valid review.
 
 ## License
 
